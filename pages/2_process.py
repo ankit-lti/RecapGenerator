@@ -6,7 +6,7 @@ import json
 import ast
 import re
 client = Groq(
-    api_key = "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" # Set your Groq API key as an environment variable
+    api_key = "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" # Set your Groq API key as an environment variable
 )
 
 def generate_transcript():
@@ -19,6 +19,28 @@ def generate_transcript():
     
     try:
         with open(filename, "rb") as file:
+            transcription = client.audio.transcriptions.create(
+                file=(filename, file.read()),
+                model="whisper-large-v3",
+                temperature=0,
+                response_format="verbose_json",
+                timestamp_granularities= ["word", "segment"],
+            )
+        print(json.dumps(transcription, indent=2, default=str))
+    except Exception as e:
+        st.error("An unexpected error occurred.")
+        st.exception(e)  
+
+def generate_transcript(file_path):
+    st.info(f"Generating Transcript")
+    
+    filename = os.path.join("files", "videoplayback.mp4")
+    if not os.path.isfile(filename):
+        st.error(f"File not found: {os.path.abspath(filename)}")
+    st.write("Looking for file at:", os.path.abspath(filename))
+    
+    try:
+        with open(file_path, "rb") as file:
             transcription = client.audio.transcriptions.create(
                 file=(filename, file.read()),
                 model="whisper-large-v3",
@@ -46,25 +68,42 @@ def generate_summary():
             transcript_content = f.read()
 
         completion = client.chat.completions.create(
-            model="deepseek-r1-distill-llama-70b",
+            #model="deepseek-r1-distill-llama-70b",
+            model="llama-3.3-70b-versatile",
             messages=[
             {
                 "role": "system",
-                "content": "You are a brilliant movie analysis API that performs analysis based on provided transcript of the movie with the timestamp and its segment detail as well. Respond only with JSON using this format: {\"movie_analysis\": {\"genre\": \"Action|Comedy|Drama|Fantasy|Horror|Mystery|Romance|Thriller\", \"confidence_score\": 0.95, \"key_phrases\": [{\"phrase\": \"detected key phrase\", \"sentiment\": \"positive|negative|neutral\"}], \"summary\": \"Detail summary of the movie transcript\"}}"
+                "content": "You are a brilliant movie analysis API that performs analysis based on provided transcript of the movie with the timestamp and its segment detail as well. Respond only with JSON in this exact format: {\"genre\": \"Action|Comedy|Drama|Fantasy|Horror|Mystery|Romance|Thriller\",\"VoiceOver\": \"Recap VoiceOver\"}.\n "
+                            "Do not include any other text outside of the JSON."
             },
             {
                 "role": "user",
-                "content": transcript_content
+                "content": "I have a complete transcript of the movie “[Movie Title]” (runtime ≈ 2 h 30 m). I’ve watched up through timestamp **[HH:MM:SS]** (about 1 hour in)."
+                           "Using the transcript, please generate a **concise, coherent narrative recap** of everything that’s happened **from the very beginning up to [HH:MM:SS]**, suitable for a listener who wants to catch up in **under five minutes**. "
+                           "Your recap should:\n"
+                           "1. **Summarize only the key plot beats**, major character introductions and relationships, setting the tone and stakes.\n"
+                           "2. **Use continuous prose** (no bullet lists), as if a voice-over narrator is speaking.\n"
+                           "3. **Keep it engaging but efficient**—aim for roughly 600–800 words (about a 5-minute read aloud).\n"
+                           "4. **Reference timestamps sparingly**, e.g. “By 00:15, our hero has already…”, but don’t over-timestamp every line."
+                           "5. **Avoid spoilers beyond [HH:MM:SS]**—only cover events up to that point."
+                           "6. **If [HH:MM:SS] is not provided, assume it is a request for a recap of the entire movie (from start to finish).**\n"
+                           "7. **Include the film's genre in the recap and use a voice-over narration style that matches that genre's tone."
+                           "For example, you might start:"
+                           "> “At dawn in the sleepy town of Elmwood (00:00–00:05), we meet Alice, a curious archivist..."
+                           "and conclude around:"
+                           "> By 01:00:00, Alice has uncovered the first cryptic clue and narrowly escaped the antagonist's agents..."
+                           "Now here is the transcript." + transcript_content            
             }
             ],
+            response_format={"type": "json_object"},
             temperature=0.6,
             max_completion_tokens=6000,
             top_p=0.95,
             stream=False,
             stop=None,
         )
-        st.write(completion.choices[0].message)
-        full_response = completion.choices[0].message
+        st.write(completion.choices[0].message.content)
+        full_response = completion.choices[0].message.content
         st.session_state['full_response'] = full_response
     except Exception as e:
         st.error("An unexpected error occurred.")
@@ -83,58 +122,77 @@ def generate_timestamp():
     if words_match:
         words_str = words_match.group(1)
         words = json.loads(words_str)
+        print(words)
     if segments_match:
         segments_str = segments_match.group(1)
         segments = json.loads(segments_str)
+        print(segments)
     try:
         full_response = st.session_state.get('full_response', '')
-        full_response = {
-    "content": "<think>\nOkay, I need to analyze this movie transcript ...\n</think>\n\n"
-               "{\"movie_analysis\": {\"genre\": \"Thriller\", \"confidence_score\": 0.95, "
-               "\"key_phrases\": [{\"phrase\": \"CIA black fault break-in\", \"sentiment\": \"negative\"}, "
-               "{\"phrase\": \"The Kremlin bombing\", \"sentiment\": \"negative\"}, "
-               "{\"phrase\": \"Your team has been betrayed\", \"sentiment\": \"negative\"}, "
-               "{\"phrase\": \"Our lives are the sum of our choices\", \"sentiment\": \"positive\"}], "
-               "\"summary\": \"The transcript suggests a high-stakes thriller involving espionage, betrayal, and critical decision-making. "
-               "The dialogue hints at a character named Ethan facing a world on the brink of crisis, with themes of destiny and trust. "
-               "The mention of CIA operations, bombings, and compromised secrets indicates a complex plot with intense consequences.\"}}",
-    "role": "assistant"
-}
-        content_str = full_response["content"]
-        json_match = re.search(r'(\{.*"movie_analysis".*\})', content_str, re.DOTALL)
-        if json_match:
-            movie_json_str = json_match.group(1)
-            movie_json = json.loads(movie_json_str)
-            movie_analysis = movie_json.get("movie_analysis", {})
-            genre = movie_analysis.get("genre")
-            key_phrases = movie_analysis.get("key_phrases")
-            summary = movie_analysis.get("summary")
-            # Now you can use genre, key_phrases, and summary as needed
-            completion = client.chat.completions.create(
+        print(full_response)
+        full_response = json.loads(full_response)
+        genre_str = full_response.get("genre")
+        print(genre_str)
+        voiceover_str = full_response.get("VoiceOver")
+        print(voiceover_str)
+        #json_match = re.search(r'(\{.*"movie_analysis".*\})', content_str, re.DOTALL)
+        #if json_match:
+        #    movie_json_str = json_match.group(1)
+        #    movie_json = json.loads(movie_json_str)
+        #    movie_analysis = movie_json.get("movie_analysis", {})
+        #    print(movie_analysis)
+        #    genre = movie_analysis.get("genre")
+        #    print(genre)
+        #    key_phrases = movie_analysis.get("key_phrases")
+        #    print(key_phrases)
+        #    summary = movie_analysis.get("summary")
+        #    print(summary)
+        #     Now you can use genre, key_phrases, and summary as needed
+        completion = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=[
+        messages=[
             {
                 "role": "system",
-                "content": "You are a brilliant movie analysis API that provide key timestamps of the movie  based on provided transcript of the movie with the timestamp, movie segment detail, genre , key phrase in the movie and its summary. Key timestamps will be used to create short video which should not more than 45 seconds. Respond only with JSON using this format: {\"movie_timestamp\": {\"timestamps\": [{\"start\": \"start videostamp\", \"end\": \"end timestamp\"}]\}"
+                "content": "You are a brilliant movie analysis API that finds relevant transcript timestamps to support a given voice-over narration. Respond only with JSON in this exact format:  {\"genre\": \"Action|Comedy|Drama|Fantasy|Horror|Mystery|Romance|Thriller\", \"visual_recap\": [{\"start\": \"HH:MM:SS\", \"end\": \"HH:MM:SS\", \"description\": \"Scene description matching the voice-over segment\"}, …]}. Do not include any text outside of the JSON. "       
             },
             {
                 "role": "user",
-                "content": "Provide movie timestamp to generate short video. Here are the details: \n\nGenre: " + genre + "\n\nKey Phrases: " + str(key_phrases) + "\n\nSummary: " + summary + "\n\nTranscript: " + str(words) + "\n\nSegments: " + str(segments)
+                "content": "TASK:\n 1️. Analyze narration and transcript: For each key event or concept in the voice-over, identify the transcript segment that most closely represents it. Focus on meaning and context rather than exact word match.\n 2. Determine timestamps:\n- Use the start of the first word and the end of the last word in the selected transcript segment.\n- Use actual timestamps from the transcript; do not create or assume timestamps.\n- Convert timestamps to HH:MM:SS (zero-padded to two digits per section).\n 3. Maintain order: List segments chronologically as they appear in the transcript.\n 4. Write description: Provide a short, accurate description of the scene or dialogue that aligns with the voice-over.\n 5. Stick to JSON: Output only the JSON structure, no additional text or explanation.\n\n### INPUTS:\nVoice-Over Narration: \nTranscript (with timestamps): \n\n### NOTE:\n Do not invent timestamps.\n Timestamps must be from the transcript.\n Do not assume duration; base it only on transcript data.\n Output valid JSON exactly as specified."
             }
-            ],
-            temperature=0.6,
-            max_completion_tokens=10000,
-            top_p=0.95,
-            stream=False,
-            stop=None,
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.6,
+        max_completion_tokens=10000,
+        top_p=0.95,
+        stream=False,
+        stop=None,
         )
-            st.write(completion.choices[0].message)
-        else:
-            st.error("movie_analysis JSON not found in the response.")
+        st.write(completion.choices[0].message)
     except json.JSONDecodeError as e:
-         st.error(f"Error decoding JSON: {e}")
+        st.error(f"Error decoding JSON: {e}")
+    except Exception as e:
+        st.error("An unexpected error occurred.")
+        st.exception(e)
 
-st.title("Generate Recap of the Video")
+uploaded_file = st.file_uploader("Upload a video file", type=["mp4"])
+if uploaded_file is not None:
+    file_path = os.path.join("files", uploaded_file.name)
+    with open(file_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    
+    st.write("Uploaded file:", uploaded_file.name)
+    
+    if st.button("Generate Recap"):
+        with st.spinner("Processing..."):
+            transcription = generate_transcript(file_path)
+            if transcription:
+                transcript_content = json.dumps(transcription)  # Assuming the transcription is in JSON format
+                summary = generate_summary(transcript_content)
+                if summary:
+                    voiceover_str = summary.get("VoiceOver", "")
+                    words = transcription.get("words", [])
+                    segments = transcription.get("segments", [])
+                    generate_timestamp(voiceover_str, words, segments) 
 
 st.button("Generate Transcribe",on_click=generate_transcript)
 
